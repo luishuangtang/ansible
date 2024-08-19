@@ -1,0 +1,89 @@
+---
+- name: getting credentials
+  hosts: localhost
+  vars_prompt:
+  - name: username
+    prompt: Enter Admin ID (ex. Bunny)
+    private: false
+  - name: password
+    prompt: AD password?
+  tasks:
+  - name: set fact
+    set_fact:
+     id: '{{ username }}'
+     pw: '{{ password }}'
+
+- name: getting switch IPs
+  hosts: ios
+  gather_facts: false
+  remote_user: <redacted>
+  vars:
+   ansible_ssh_private_key_file: "/home/<redacted>/.ssh/id_rsa"
+#   ansible_python_interpreter: /usr/bin/python3
+#   ansible_username: "{{hostvars['localhost']['id']}}"
+#   ansible_password: "{{hostvars['localhost']['pw']}}"
+
+  tasks:
+  - name: running terminal datadump command on switch
+    cisco.ios.ios_command:
+     commands:
+      - command: terminal datadump
+
+  - name: running show runing-config command on switch
+    cisco.ios.ios_command:
+     commands:
+      - command: show running
+    register: output
+
+  - name: getting hostname of switch
+    cisco.ios.ios_command:
+     commands:
+      - command: show running | include hostname
+    register: hostname
+
+  - name: getting current date
+    cisco.ios.ios_command:
+     commands: 
+      - command: show clock | include [2][0][0-9][0-9]
+    register: date
+
+  - name: setting txt path variable
+    ansible.builtin.set_fact:
+     hostname_stdout: "{{ hostname.stdout | regex_search('\\s.*\\d') | replace (' ', '') }}"
+     filename: running-config-{{hostname.stdout | regex_search('\s.*\d') | replace (" ", "")}}-{{date.stdout | regex_search('[a-zA-z]{3,}\s[0-9][0-9].*\d') | replace (" ", "-") }}.txt 
+     stout: "{{ output.stdout | join('\n') }}"
+
+  
+#  - name: debug
+#    debug:
+#     var: hostname_stdout
+     
+  - name: creating folder on master node
+    ansible.builtin.file:
+     path: /etc/ansible/test/{{hostname_stdout}}
+     state: directory     
+          
+  - name: creating file on master node
+    ansible.builtin.file:
+     path: /etc/ansible/test/{{hostname_stdout}}/{{filename}}
+     state: touch
+     
+  - name: content
+    ansible.builtin.lineinfile:
+     path: /etc/ansible/test/{{hostname_stdout}}/{{filename}}
+     line: "{{stout}}"
+     
+- name: create file on <redacted>
+  hosts: TST
+  become: yes
+  become_method: runas
+  become_user: "{{hostvars['localhost']['id']}}"
+  vars:
+   ansible_user: "{{hostvars['localhost']['id']}}@<redacted>"
+   ansible_password: "{{hostvars['localhost']['pw']}}"
+  tasks:
+   - name: copy
+     ansible.windows.win_copy:
+      src: /etc/ansible/test/
+      dest: '\\<redacted network path>'
+      exclude: "*"
